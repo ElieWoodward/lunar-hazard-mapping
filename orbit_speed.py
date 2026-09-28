@@ -1,15 +1,22 @@
 import math
 
-GM=4.9048e12
-R=1737.4e3
-altitude=500e3
+GM = 4.9048e12
+R = 1737.4e3
 
-r=R+altitude
-v=math.sqrt(GM/r)
-print(v)
+def orbit_speed(altitude_km):
+    r = R + altitude_km * 1000
+    return math.sqrt(GM / r)
 
-print("Altitude (km) | Orbit speed (m/s)")
-for altitude_km in [50, 100, 200, 500, 1000, 5000]:
-    r=R+altitude_km * 1000
-    v= math.sqrt(GM/r)
-    print(altitude_km, "|", round(v))
+def orbit_period(altitude_km):
+    r = R + altitude_km * 1000
+    return (2 * math.pi * r) / orbit_speed(altitude_km)
+
+def orbit_period_kepler(altitude_km):
+    r = R + altitude_km * 1000
+    return 2 * math.pi * math.sqrt(r**3 / GM)
+
+print(orbit_period(100) / 60, "minutes (distance / speed)")
+print(orbit_period_kepler(100) / 60, "minutes (Kepler)")
+print(math.isclose(orbit_period(100), orbit_period_kepler(100)))
+
+    
