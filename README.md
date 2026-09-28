@@ -6,3 +6,4 @@ Update 1: It's the same night as the first addition to this README, and tonight 
 
 Update 2: It's the next night, and I just finished work on writing a basic function using Kepler's Law, to calculate orbit time around the moon based off of orbit\_speed, using parameters, its pretty cool, we'll see whats next.
 
+Update 3: Just mapped Zone 1's elevation using the PGDA South Pole Landing Site LOLA DEMs, which let me, using with, pull values from that data set using matplotlib, a program that lets me read .tif files as their elevation heights.
