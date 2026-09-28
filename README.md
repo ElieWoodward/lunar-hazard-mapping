@@ -1,4 +1,8 @@
 # lunar-hazard-mapping
+
 This is the first day of this supposed project I'm going to complete, I have no clue if I'll really follow through on this, or if I'll forget about it in a week, but I guess we'll see. The final plan is this, to create and build a lunar hazard mapping system that accurately maps to the best lunar landing spot based off of the safety of it, using real moon data and some crazy integrals apparently. If you had no clue, I'm using Claude, but not in the way you probably think. Claude is going to teach me everything I need to learn to do this project myself, teaching me rendering, python, and ai coding along the way. I love this idea, and hopefully I get a frickin internship, and honestly, this is a probably a horrible description of what this project ends up becoming, if anything. I guess we'll have to see.
 
 Update 1: It's the same night as the first addition to this README, and tonight I worked on coding a program to calculate lunar orbit necessary velocities to maintain certain heights of orbit. I understood what I coded, using a for loop as well as the standard math package. I've taken a basic python class before, so I know basic things, but we'll see where we get tomorrow.
+
+Update 2: It's the next night, and I just finished work on writing a basic function using Kepler's Law, to calculate orbit time around the moon based off of orbit\_speed, using parameters, its pretty cool, we'll see whats next.
+
