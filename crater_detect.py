@@ -7,15 +7,23 @@ from projection import latlon_to_xy
 
 # ---- Settings ----
 ELEVATION_FILE = "data/Site01_final_adj_5mpp_surf.tif"
+SLOPE_FILE = "data/Site01_final_adj_5mpp_slp.tif"
+CATALOG_FILE = "data/lunar_crater_database_robbins_2018.csv"
+
 PIXEL_M = 5
+MAP_LEFT_M = -19000        # map edges in projection meters (from site_info.py)
+MAP_RIGHT_M = -3000
+MAP_TOP_M = -4000
+MAP_BOTTOM_M = -20000
+
 BLUR_SIGMA_PX = 100        # 100 px x 5 m = 500 m blur
-DEPTH_THRESHOLD_M = -10    # how far below surroundings counts as a dip
+DEPTH_THRESHOLD_M = -10    # threshold used for the final map and CSV
+SWEEP_THRESHOLDS_M = [-5, -10, -15, -20]
 BORDER_PX = 200            # 200 px x 5 m = 1 km ignored at each edge
 MIN_DIAMETER_M = 20        # smaller than this is likely noise
 MIN_ASPECT = 0.7           # 1.0 = perfectly round bounding box
 FILL_MIN = 0.6             # a perfect circle fills pi/4 = 0.785
 FILL_MAX = 0.9
-SLOPE_FILE = "data/Site01_final_adj_5mpp_slp.tif"
 
 
 # ---- Functions ----
@@ -38,6 +46,7 @@ def mask_border(mask, border_px):
     result[:, :border_px] = False
     result[:, -border_px:] = False
     return result
+
 
 def measure_blobs(labeled, pixel_m):
     """Position, size, and shape of every labeled blob."""
@@ -60,122 +69,111 @@ def measure_blobs(labeled, pixel_m):
         })
     return pd.DataFrame(results)
 
-# ---- Main ----
+
+def filter_craters(blobs, rows, cols):
+    """Keep blobs that are big enough, round, and not cut off by the border."""
+    touches_border = (
+        (blobs["row_min"] <= BORDER_PX)
+        | (blobs["row_max"] >= rows - BORDER_PX)
+        | (blobs["col_min"] <= BORDER_PX)
+        | (blobs["col_max"] >= cols - BORDER_PX)
+    )
+    size_ok = blobs["diameter_m"] >= MIN_DIAMETER_M
+    round_ok = (
+        (blobs["aspect"] >= MIN_ASPECT)
+        & (blobs["fill"] >= FILL_MIN)
+        & (blobs["fill"] <= FILL_MAX)
+    )
+    return blobs[size_ok & round_ok & ~touches_border]
+
+
+def detect_craters(relief, threshold_m, rows, cols):
+    """Run the full detector at one depth threshold. Returns detections and candidate count."""
+    candidates = mask_border(relief < threshold_m, BORDER_PX)
+    labeled, n = label(candidates)
+    blobs = measure_blobs(labeled, PIXEL_M)
+    if len(blobs) == 0:
+        return blobs, n
+    return filter_craters(blobs, rows, cols), n
+
+
+def load_site_catalog():
+    """Catalog craters inside Site01, as x/y/diameter in km from the top-left corner."""
+    catalog = pd.read_csv(CATALOG_FILE)
+    south = catalog[catalog["LAT_CIRC_IMG"] < -88]
+    x, y = latlon_to_xy(south["LAT_CIRC_IMG"].to_numpy(),
+                        south["LON_CIRC_IMG"].to_numpy())
+    d = south["DIAM_CIRC_IMG"].to_numpy()
+    inside = ((x >= MAP_LEFT_M) & (x <= MAP_RIGHT_M)
+              & (y >= MAP_BOTTOM_M) & (y <= MAP_TOP_M))
+    x_km = (x[inside] - MAP_LEFT_M) / 1000
+    y_km = (MAP_TOP_M - y[inside]) / 1000
+    return x_km, y_km, d[inside]
+
+
+def match_to_catalog(det_x, det_y, det_d, cat_x, cat_y, cat_d):
+    """For each catalog crater, True if a detection matches its position and size."""
+    found = []
+    for cx, cy, d in zip(cat_x, cat_y, cat_d):
+        dist = np.sqrt((det_x - cx)**2 + (det_y - cy)**2)
+        close = dist <= d / 4
+        similar = (det_d >= d / 2) & (det_d <= d * 2)
+        found.append((close & similar).any())
+    return np.array(found)
+
+
+def evaluate(detected, cat_x, cat_y, cat_d):
+    """Which catalog craters the detections found (True/False for each)."""
+    if len(detected) == 0:
+        return np.zeros(len(cat_x), dtype=bool)
+    det_x = detected["col"].to_numpy() * PIXEL_M / 1000
+    det_y = detected["row"].to_numpy() * PIXEL_M / 1000
+    det_d = detected["diameter_m"].to_numpy() / 1000
+    return match_to_catalog(det_x, det_y, det_d, cat_x, cat_y, cat_d)
+
+
+# ---- Main: setup ----
 elevation = load_map(ELEVATION_FILE)
 rows, cols = elevation.shape
-relief = local_relief(elevation, BLUR_SIGMA_PX)
-candidates = mask_border(relief < DEPTH_THRESHOLD_M, BORDER_PX)
-
-labeled, n = label(candidates)
-print(n, "candidate depressions")
-
-blobs = measure_blobs(labeled, PIXEL_M)
-
-touches_border = (
-    (blobs["row_min"] <= BORDER_PX)
-    | (blobs["row_max"] >= rows - BORDER_PX)
-    | (blobs["col_min"] <= BORDER_PX)
-    | (blobs["col_max"] >= cols - BORDER_PX)
-)
-size_ok = blobs["diameter_m"] >= MIN_DIAMETER_M
-round_ok = (
-    (blobs["aspect"] >= MIN_ASPECT)
-    & (blobs["fill"] >= FILL_MIN)
-    & (blobs["fill"] <= FILL_MAX)
-)
-
-detected = blobs[size_ok & round_ok & ~touches_border]
-print(len(detected), "crater detections")
-detected.to_csv("detected_craters.csv", index=False)
-
-extent = [0, cols * PIXEL_M / 1000, rows * PIXEL_M / 1000, 0]
-
-fig, axes = plt.subplots(1, 2)
-axes[0].imshow(relief, cmap="RdBu", vmin=-50, vmax=50, extent=extent)
-axes[0].set_title("Local relief")
-axes[1].imshow(labeled > 0, cmap="gray", extent=extent)
-axes[1].set_title("Candidates")
-plt.show()
-
-# ---- Settings ----
-ELEVATION_FILE = "data/Site01_final_adj_5mpp_surf.tif"
-PIXEL_M = 5
-BLUR_SIGMA_PX = 100        # 100 px x 5 m = 500 m blur
-DEPTH_THRESHOLD_M = -10    # how far below surroundings counts as a dip
-BORDER_PX = 200            # 200 px x 5 m = 1 km ignored at each edge
-
-
-# ---- Functions ----
-def load_map(path):
-    """Load a single-band GeoTIFF as a NumPy array."""
-    with rasterio.open(path) as src:
-        return src.read(1)
-
-
-def local_relief(elevation, sigma_px):
-    """Elevation minus a blurred copy, leaving only small-scale bumps and dips."""
-    return elevation - gaussian_filter(elevation, sigma=sigma_px)
-
-
-def mask_border(mask, border_px):
-    """Return a copy with a border of the given width set to False."""
-    result = mask.copy()
-    result[:border_px, :] = False
-    result[-border_px:, :] = False
-    result[:, :border_px] = False
-    result[:, -border_px:] = False
-    return result
-
-
-# ---- Main ----
-elevation = load_map(ELEVATION_FILE)
-rows, cols = elevation.shape
-extent = [0, cols * PIXEL_M / 1000, rows * PIXEL_M / 1000, 0]
+map_w_km = cols * PIXEL_M / 1000
+map_h_km = rows * PIXEL_M / 1000
+extent = [0, map_w_km, map_h_km, 0]
 
 relief = local_relief(elevation, BLUR_SIGMA_PX)
-candidates = mask_border(relief < DEPTH_THRESHOLD_M, BORDER_PX)
 
-labeled, n = label(candidates)
-print(n, "candidate depressions")
+cat_x, cat_y, cat_d = load_site_catalog()
+border_km = BORDER_PX * PIXEL_M / 1000
+fair = ((cat_x >= border_km) & (cat_x <= map_w_km - border_km)
+        & (cat_y >= border_km) & (cat_y <= map_h_km - border_km))
+cat_x, cat_y, cat_d = cat_x[fair], cat_y[fair], cat_d[fair]
+print(len(cat_d), "catalog craters in the evaluated area")
 
-blobs = measure_blobs(labeled, PIXEL_M)
+# ---- Main: sweep ----
+print("Threshold (m) | Candidates | Detections | Recall (%)")
+for t in SWEEP_THRESHOLDS_M:
+    det, n = detect_craters(relief, t, rows, cols)
+    found = evaluate(det, cat_x, cat_y, cat_d)
+    print(t, "|", n, "|", len(det), "|", round(found.mean() * 100, 1))
 
-touches_border = (
-    (blobs["row_min"] <= BORDER_PX)
-    | (blobs["row_max"] >= rows - BORDER_PX)
-    | (blobs["col_min"] <= BORDER_PX)
-    | (blobs["col_max"] >= cols - BORDER_PX)
-)
-size_ok = blobs["diameter_m"] >= MIN_DIAMETER_M
-round_ok = (
-    (blobs["aspect"] >= MIN_ASPECT)
-    & (blobs["fill"] >= FILL_MIN)
-    & (blobs["fill"] <= FILL_MAX)
-)
-
-detected = blobs[size_ok & round_ok & ~touches_border]
-print(len(detected), "crater detections")
+# ---- Main: final run at the chosen threshold ----
+detected, n = detect_craters(relief, DEPTH_THRESHOLD_M, rows, cols)
 detected.to_csv("detected_craters.csv", index=False)
+found = evaluate(detected, cat_x, cat_y, cat_d)
+print("Final threshold", DEPTH_THRESHOLD_M, "m:", len(detected), "detections,",
+      round(found.mean() * 100, 1), "% recall")
+for d, f in sorted(zip(cat_d, found)):
+    print(f"  {d:.2f} km  {'found' if f else 'missed'}")
+
+# ---- Main: plot ----
+det_x = detected["col"].to_numpy() * PIXEL_M / 1000
+det_y = detected["row"].to_numpy() * PIXEL_M / 1000
+det_r = detected["diameter_m"].to_numpy() / 2 / 1000
 
 slope = load_map(SLOPE_FILE)
-
-catalog = pd.read_csv("data/lunar_crater_database_robbins_2018.csv")
-south = catalog[catalog["LAT_CIRC_IMG"] < -88]
-x, y = latlon_to_xy(south["LAT_CIRC_IMG"], south["LON_CIRC_IMG"])
-inside = (x >= -19000) & (x <= -3000) & (y >= -20000) & (y <= -4000)
-
 plt.imshow(slope, cmap="gray", vmax=30, extent=extent)
-
-for _, crater in detected.iterrows():
-    cx = crater["col"] * PIXEL_M / 1000
-    cy = crater["row"] * PIXEL_M / 1000
-    r = crater["diameter_m"] / 2 / 1000
+for cx, cy, r in zip(det_x, det_y, det_r):
     plt.gca().add_patch(plt.Circle((cx, cy), r, fill=False, color="cyan"))
-
-for cx, cy, d in zip((x[inside] + 19000) / 1000,
-                     (-4000 - y[inside]) / 1000,
-                     south["DIAM_CIRC_IMG"][inside]):
+for cx, cy, d in zip(cat_x, cat_y, cat_d):
     plt.gca().add_patch(plt.Circle((cx, cy), d / 2, fill=False, color="red"))
-
 plt.title("Detected (cyan) vs catalog (red)")
 plt.show()
