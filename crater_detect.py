@@ -163,12 +163,20 @@ print("Final threshold", DEPTH_THRESHOLD_M, "m:", len(detected), "detections,",
       round(found.mean() * 100, 1), "% recall")
 for d, f in sorted(zip(cat_d, found)):
     print(f"  {d:.2f} km  {'found' if f else 'missed'}")
-
-# ---- Main: plot ----
 det_x = detected["col"].to_numpy() * PIXEL_M / 1000
 det_y = detected["row"].to_numpy() * PIXEL_M / 1000
-det_r = detected["diameter_m"].to_numpy() / 2 / 1000
+det_d = detected["diameter_m"].to_numpy() / 1000
+det_r = det_d / 2
 
+print("Why each missed crater was missed:")
+for cx, cy, d, f in zip(cat_x, cat_y, cat_d, found):
+    if not f:
+        dist = np.sqrt((det_x - cx)**2 + (det_y - cy)**2)
+        i = dist.argmin()
+        print(f"  {d:.2f} km: nearest detection {dist[i]:.2f} km away, "
+              f"{det_d[i]:.2f} km wide")
+
+# ---- Main: plot ----
 slope = load_map(SLOPE_FILE)
 plt.imshow(slope, cmap="gray", vmax=30, extent=extent)
 for cx, cy, r in zip(det_x, det_y, det_r):
